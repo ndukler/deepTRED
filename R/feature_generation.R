@@ -76,6 +76,7 @@ window_regions <- function(sites, bins = 21L, bin_width = 51L) {
     seqnames = rep(GenomicRanges::seqnames(sites), each = stepsize),
     ranges = IRanges::IRanges(start = bin_starts,
                               width = rep(widths, length(focal_sites))),
+    strand = rep(GenomicRanges::strand(sites), each = stepsize),
     site = rep(factor(seq_along(focal_sites)), each = stepsize),
     bin_idx = rep(bin_idx, length(focal_sites))
   )
@@ -84,10 +85,82 @@ window_regions <- function(sites, bins = 21L, bin_width = 51L) {
   return(GenomicRanges::split(gr, gr$site))
 }
 
+#' @title Generate GRangesList of windows
+#'
+#' @description  Generates a set of windows for each element in a
+#' \code{\link[GenomicRanges]{GRanges-class}} object. Uses the center of each
+#' region as the 0th co-ordinate in generating windows.
+#'
+#'
+#' @param bigwig_plus the path to a bigwig for reads on the plus strand
+#' @param bigwig_minus the path to a bigwig for reads on the minus strand
+#' @param remove_incomplete remove regions where any window features go outside
+#' the chromosomal range
+#' @inheritParams window_regions
+#'
+#' @return A list of vectors with each one corresponding to one set of bins and
+#' each element of a vector corresponding to a bin
+#'
+#' @name window_regions
+#'
+#' @export
 collect_features <- function(sites, bigwig_plus, bigwig_minus,
-                             bins = 21L, bin_width = 51L) {
-# Iterate over seqlevels and collect data one seqlevel at a time, then reshape
-# into data.tables where rows are sites and columns are features
+                             bins = 21L, bin_width = 51L,
+                             remove_incomplete = TRUE) {
+  # Window sites
+  windows <- window_regions(sites)
+  # Filter out incomplete feature vectors
+  if (remove_incomplete) {
+    repl_bins <- rep(bins, length.out = length(bin_width))
+    expected_length <- sum(bins)
+    remove_sites <- which(elementNROWS(windows) != expected_length)
+    if(length(remove_sites) > 0) {
+      windows <- windows[-remove_sites]
+    }
+    message("Removed ",length(remove_sites),
+            " sites with incomplete feature vectors")
+  } else {
+    stop("Not able to handle ragged input vectors yet")
+  }
 
+  if(length(windows) == 0) {
+    stop("No sites remaining")
+  }
+
+  # Get strand for each feature set
+  windows_strand <- unlist(S4Vectors::runValue(GenomicRanges::strand(windows)))
+
+  # Collect counts
+  plus_counts <- abs(do.call("rbind",
+                         summarize_bigwig(bigwig_plus, windows, "sum")))
+  minus_counts <- abs(do.call("rbind",
+                          summarize_bigwig(bigwig_minus, windows, "sum")))
+
+  # Get row means
+  mean_scale <- (matrixStats::rowMeans2(plus_counts) +
+                   matrixStats::rowMeans2(minus_counts)) / 2
+  # Remove rows with mean zero as that implies 0 counts
+  keep <- which(mean_scale > 0)
+  if(length(keep) > 0){
+    message("Removing ", length(mean_scale) - length(keep), " sites with all",
+            " non-zero entries")
+    plus_counts <- plus_counts[keep, ]
+    minus_counts <- minus_counts[keep, ]
+    mean_scale <- mean_scale[keep]
+  } else {
+    stop("No non-zero entries in feature matrix")
+  }
+
+  # Get row standard deviations
+  sd_scale <- matrixStats::rowSds(cbind(plus_counts, minus_counts),
+                                  center = mean_scale)
+
+  # Scale feature matricies
+  plus_counts <- (plus_counts - mean_scale) / sd_scale
+  minus_counts <- (minus_counts - mean_scale) / sd_scale
+  attr(plus_counts, "scaled:center") <- mean_scale
+  attr(minus_counts, "scaled:center") <- mean_scale
+  attr(plus_counts, "scaled:scale") <- sd_scale
+  attr(minus_counts, "scaled:scale") <- sd_scale
+  return(list(plus = plus_counts, minus = minus_counts))
 }
-
