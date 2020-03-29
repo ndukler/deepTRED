@@ -19,3 +19,8 @@ Imports:
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
+RoxygenNote: 7.0.2
+Collate: 
+    'bigwig_utils.R'
+    'feature_generation.R'
+    'build_training_set.R'

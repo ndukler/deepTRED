@@ -101,7 +101,7 @@ window_regions <- function(sites, bins = 21L, bin_width = 51L) {
 #' @return A list of vectors with each one corresponding to one set of bins and
 #' each element of a vector corresponding to a bin
 #'
-#' @name window_regions
+#' @name collect_features
 #'
 #' @export
 collect_features <- function(sites, bigwig_plus, bigwig_minus,
@@ -139,11 +139,11 @@ collect_features <- function(sites, bigwig_plus, bigwig_minus,
   # Get row means
   mean_scale <- (matrixStats::rowMeans2(plus_counts) +
                    matrixStats::rowMeans2(minus_counts)) / 2
-  # Remove rows with mean zero as that implies 0 counts
+  # Remove rows with mean zero as that implies all entries are 0
   keep <- which(mean_scale > 0)
-  if(length(keep) > 0){
-    message("Removing ", length(mean_scale) - length(keep), " sites with all",
-            " non-zero entries")
+  if (length(keep) != length(mean_scale)) {
+    message("Removing sites with all zero entries in their feature vector: ",
+            length(keep), " of ", length(mean_scale), " remaining")
     plus_counts <- plus_counts[keep, ]
     minus_counts <- minus_counts[keep, ]
     mean_scale <- mean_scale[keep]

@@ -12,9 +12,7 @@ if (getRversion() >= "2.15.1") {
 #' @return silent if true, else error
 #' @export
 assert_chromosome_exists <- function(chromosome, bigwig_file) {
-  bw_seqnames <- GenomicRanges::seqnames(
-    rtracklayer::seqinfo(rtracklayer::BigWigFile(bigwig_file))
-  )
+  bw_seqnames <- GenomicRanges::seqnames(seqinfo(bigwig_file))
   pass <- all(chromosome %in% bw_seqnames)
   if (!pass) {
     not_incl <- setdiff(chromosome, bw_seqnames)
@@ -23,6 +21,45 @@ assert_chromosome_exists <- function(chromosome, bigwig_file) {
                "does not exist in", bigwig_file))
   }
 }
+
+#' @title Seqinfo from file path
+#'
+#' @description  Returns seqinfo for bigwig from path of that bigwig
+#' @param x a string pointing to a bigwig file
+#' @importMethodsFrom GenomeInfoDb seqinfo
+#' @export
+methods::setMethod("seqinfo", signature(x = "character"),
+                   function(x) {
+  ext <- tools::file_ext(x)
+  if (ext %in% c('bw', 'bigWig')) {
+    info <- rtracklayer::seqinfo(rtracklayer::BigWigFile(x))
+  } else {
+    stop(ext, " is an unsupported file type")
+  }
+  return(info)
+})
+
+#' @title Total reads
+#'
+#' @description  computes total reads in bigwig
+#' @param x a string pointing to a bigwig file
+#' @export
+total_reads <- function(x){
+  # Check file existance
+  if (!file.exists(x)) {
+    stop("x path does not exist")
+  }
+  # Check correct suffix
+  ext <- tools::file_ext(x)
+  if (ext %in% c('bw', 'bigWig')) {
+    tot_reads <- sum(sapply(
+      rtracklayer::import.bw(con = x, as = "RleList"), sum))
+  } else {
+    stop(ext, " is an unsupported file type")
+  }
+  return(tot_reads)
+}
+
 
 #' @title Summarize bigwig
 #'
@@ -42,6 +79,8 @@ assert_chromosome_exists <- function(chromosome, bigwig_file) {
 #'
 #' @name summarize_bigwig
 #' @rdname summarize_bigwig
+#'
+#' @importClassesFrom GenomicRanges GRanges GRangesList
 #'
 #' @export
 methods::setGeneric("summarize_bigwig",
