@@ -51,7 +51,7 @@ window_regions <- function(sites, bins = 21L, bin_width = 51L) {
   }
   # Compute focal sites
   focal_sites <- as.integer(round(
-    (GenomicRanges::end(sites) + GenomicRanges::start(sites))/ 2))
+    (GenomicRanges::end(sites) + GenomicRanges::start(sites)) / 2))
   # Preallocate start vector
   bin_starts <- integer(sum(bins * length(sites)))
   # Pre-compute start adjustments and unlist
@@ -87,11 +87,12 @@ window_regions <- function(sites, bins = 21L, bin_width = 51L) {
 
 #' @title Generate GRangesList of windows
 #'
-#' @description  Generates a set of windows for each element in a
-#' \code{\link[GenomicRanges]{GRanges-class}} object. Uses the center of each
+#' @description  Generates a set of windows for each transcript in a
+#' \code{\link[GenomicRanges]{GRanges-class}} object. Uses the TSS of each
 #' region as the 0th co-ordinate in generating windows.
 #'
-#'
+#' @param trancripts a code{\link[GenomicRanges]{GRanges-class}} object
+#' containing
 #' @param bigwig_plus the path to a bigwig for reads on the plus strand
 #' @param bigwig_minus the path to a bigwig for reads on the minus strand
 #' @param remove_incomplete remove regions where any window features go outside
@@ -101,21 +102,26 @@ window_regions <- function(sites, bins = 21L, bin_width = 51L) {
 #' @return A list of vectors with each one corresponding to one set of bins and
 #' each element of a vector corresponding to a bin
 #'
-#' @name collect_features
+#' @name collect_tss_features
 #'
 #' @export
-collect_features <- function(sites, bigwig_plus, bigwig_minus,
+collect_tss_features <- function(transcripts, bigwig_plus, bigwig_minus,
                              bins = 21L, bin_width = 51L,
                              remove_incomplete = TRUE) {
+  # Get TSS of transcripts
+  tss <- GenomicRanges::promoters(transcripts, upstream = 0, downstream = 1)
   # Window sites
-  windows <- window_regions(sites)
+  windows <- window_regions(tss)
+  names(windows) <- as.character(1:length(windows))
   # Filter out incomplete feature vectors
   if (remove_incomplete) {
     repl_bins <- rep(bins, length.out = length(bin_width))
     expected_length <- sum(bins)
-    remove_sites <- which(elementNROWS(windows) != expected_length)
+    remove_sites <- which(S4Vectors::elementNROWS(windows) != expected_length)
     if(length(remove_sites) > 0) {
       windows <- windows[-remove_sites]
+      # Filter down TSS to only the sites that were retained
+      tss <- tss[-remove_sites]
     }
     message("Removed ",length(remove_sites),
             " sites with incomplete feature vectors")
@@ -128,39 +134,59 @@ collect_features <- function(sites, bigwig_plus, bigwig_minus,
   }
 
   # Get strand for each feature set
-  windows_strand <- unlist(S4Vectors::runValue(GenomicRanges::strand(windows)))
+  transcript_strand <- as.vector(GenomicRanges::strand(tss))
 
-  # Collect counts
-  plus_counts <- abs(do.call("rbind",
-                         summarize_bigwig(bigwig_plus, windows, "sum")))
-  minus_counts <- abs(do.call("rbind",
-                          summarize_bigwig(bigwig_minus, windows, "sum")))
+  # Collect sense and antisense counts
+  # Reverse bin order such that if windows were indexed ..., -1, 0, 1, ... the
+  # sense strand always runs in the positive direction and the anti-sense strand
+  # always runs in the negative direction
+  # S4Vectors::revElements()
+  is_sense_positive <- (transcript_strand == '+')
+  sense_counts <- c(
+    summarize_bigwig(bigwig_plus, windows[is_sense_positive], "sum"),
+    summarize_bigwig(bigwig_minus,
+                     S4Vectors::revElements(windows[!is_sense_positive]),
+                     "sum"))
+  sense_counts <-
+    do.call("rbind",
+            sense_counts[order(as.integer(names(sense_counts)))]
+    )
+  antisense_counts <- c(
+    summarize_bigwig(bigwig_plus,
+                     S4Vectors::revElements(windows[!is_sense_positive]),
+                     "sum"),
+    summarize_bigwig(bigwig_minus, windows[is_sense_positive], "sum"))
+  antisense_counts <-
+    do.call("rbind",
+            antisense_counts[order(as.integer(names(antisense_counts)))]
+    )
 
   # Get row means
-  mean_scale <- (matrixStats::rowMeans2(plus_counts) +
-                   matrixStats::rowMeans2(minus_counts)) / 2
+  mean_scale <- (matrixStats::rowMeans2(sense_counts) +
+                   matrixStats::rowMeans2(antisense_counts)) / 2
   # Remove rows with mean zero as that implies all entries are 0
   keep <- which(mean_scale > 0)
   if (length(keep) != length(mean_scale)) {
     message("Removing sites with all zero entries in their feature vector: ",
             length(keep), " of ", length(mean_scale), " remaining")
-    plus_counts <- plus_counts[keep, ]
-    minus_counts <- minus_counts[keep, ]
+    sense_counts <- sense_counts[keep, ]
+    antisense_counts <- antisense_counts[keep, ]
     mean_scale <- mean_scale[keep]
+    tss <- tss[keep]
   } else {
     stop("No non-zero entries in feature matrix")
   }
 
   # Get row standard deviations
-  sd_scale <- matrixStats::rowSds(cbind(plus_counts, minus_counts),
+  sd_scale <- matrixStats::rowSds(cbind(sense_counts, antisense_counts),
                                   center = mean_scale)
 
   # Scale feature matricies
-  plus_counts <- (plus_counts - mean_scale) / sd_scale
-  minus_counts <- (minus_counts - mean_scale) / sd_scale
-  attr(plus_counts, "scaled:center") <- mean_scale
-  attr(minus_counts, "scaled:center") <- mean_scale
-  attr(plus_counts, "scaled:scale") <- sd_scale
-  attr(minus_counts, "scaled:scale") <- sd_scale
-  return(list(plus = plus_counts, minus = minus_counts))
+  plus_counts <- (sense_counts - mean_scale) / sd_scale
+  minus_counts <- (antisense_counts - mean_scale) / sd_scale
+  attr(sense_counts, "scaled:center") <- mean_scale
+  attr(antisense_counts, "scaled:center") <- mean_scale
+  attr(sense_counts, "scaled:scale") <- sd_scale
+  attr(antisense_counts, "scaled:scale") <- sd_scale
+  return(list(sense = sense_counts, antisense = antisense_counts, tss = tss))
 }
