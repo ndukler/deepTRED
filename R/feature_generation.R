@@ -182,11 +182,15 @@ collect_tss_features <- function(transcripts, bigwig_plus, bigwig_minus,
                                   center = mean_scale)
 
   # Scale feature matricies
-  plus_counts <- (sense_counts - mean_scale) / sd_scale
-  minus_counts <- (antisense_counts - mean_scale) / sd_scale
-  attr(sense_counts, "scaled:center") <- mean_scale
-  attr(antisense_counts, "scaled:center") <- mean_scale
-  attr(sense_counts, "scaled:scale") <- sd_scale
-  attr(antisense_counts, "scaled:scale") <- sd_scale
-  return(list(sense = sense_counts, antisense = antisense_counts, tss = tss))
+  sense_counts <- (sense_counts - mean_scale) / sd_scale
+  antisense_counts <- (antisense_counts - mean_scale) / sd_scale
+
+  # Place counts into a 3D array
+  feat_arr <- array(0, dim=c(nrow(sense_counts), bins, 2))
+  feat_arr[, , 1] <- sense_counts
+  feat_arr[, , 2] <- antisense_counts
+
+  attr(feat_arr, "scaled:center") <- mean_scale
+  attr(feat_arr, "scaled:scale") <- sd_scale
+  return(list(feature_array = feat_arr, tss = tss))
 }
